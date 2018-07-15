@@ -1,0 +1,148 @@
+---
+title: "Wrangling Honey Production Data"
+author: "John Mullan"
+date: "7/11/2018"
+output: html_document
+---
+
+This script is meant to walk through how the honey production and bee popoulation data were cleaned and wrangled in order for a simple Shiny dashboard to be built. The data in Github was collected from the NASS.   
+
+## Load Libraries
+First, we need to load the libraries that we will be using:  
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(data.table)
+library(plyr)
+library(formattable)
+library(RCurl)
+```
+
+## Import Datasets
+Next, we need to load in the existing dataset, which can be found on Kaggle, [here](https://www.kaggle.com/jessicali9530/honey-production). For simplicity, I have already downloaded the clean Kaggle dataset. We also need to import the new data from the Github repository:  
+```{r message=FALSE, warning=FALSE}
+honeyclean9812 <- read_csv(file = "/Users/John/Desktop/Projects/Honey-Production-Dashboard/Honey Data/honeyproduction.csv")
+
+honeyraw2013 <- read_lines(file = getURL("https://raw.githubusercontent.com/TarHeel45/Honey-Production-Dashboard/master/Honey%20Data/Hone-03-20-2015/hony_p02_t002.csv"))
+
+honeyraw2014 <- read_lines(file = getURL("https://raw.githubusercontent.com/TarHeel45/Honey-Production-Dashboard/master/Honey%20Data/Hone-03-22-2016/hony_p02_t002.csv"))
+
+honeyraw2015 <- read_lines(file = getURL("https://raw.githubusercontent.com/TarHeel45/Honey-Production-Dashboard/master/Honey%20Data/Hone-03-22-2017/hony_p03_t002.csv"))
+
+honeyraw2016 <- read_lines(file = getURL("https://raw.githubusercontent.com/TarHeel45/Honey-Production-Dashboard/master/Honey%20Data/Hone-03-14-2018/hony_p02_t019.csv"))
+```
+
+### Explore Structure 
+Now we have all of the necessary data imported. The raw datasets are pretty messy, so we will need to analyze where the actual data we want are and how we can extract that data.   
+
+Let's look at *honeyraw2013*:  
+```{r message=FALSE, warning=FALSE}
+head(honeyraw2013, 20)
+tail(honeyraw2013, 10)
+```
+Here are a few things I notice:  
+  1. Rows 1 through 9 don't contain any actual data entries. These lines are basically the header, which contains the column headings and other information about the data.  
+  2. The data we are interested in start on row 10 and the rows are in the same format from there with a few blank rows inbetween.  
+  3. The last 10 or so rows contain caveats and other information about missing data, rounding, etc.   
+  4. It looks like our range of pertinent data is from 10 to 55.  
+
+### Initial Cleaning
+Now, we can begin to tidy up the datasets. First, let's get rid of the header area. Note: If there were more than four datasets, I would likely write a function that could streamline this process. However, because there are so few datasets and because the line numbers do differ a bit, I figured I would just manually go through them.  
+```{r}
+honeyraw2013 <- data.frame(honeyraw2013[-1:-9])
+honeyraw2014 <- data.frame(honeyraw2014[-1:-9])
+honeyraw2015 <- data.frame(honeyraw2015[-1:-9])
+honeyraw2016 <- data.frame(honeyraw2016[-1:-9])
+
+```
+Next, let's select only the lines we need, remove the blank rows (I had to find these manually), and convert rows to character strings.  
+```{r}
+honeyraw2013 <- honeyraw2013[1:46,] #Selecting only states, other states, and US
+honeyraw2013 <- honeyraw2013[-c(11,22,33,43,45)] #Remove blank rows
+honeyraw2013 <- data.frame(honeyraw2013)
+honeyraw2013$honeyraw2013 <- as.character(honeyraw2013$honeyraw2013) #Convert rows to character strings
+
+
+honeyraw2014 <- honeyraw2014[1:47,] 
+honeyraw2014 <- honeyraw2014[-c(11,22,33,44,46)]
+honeyraw2014 <- data.frame(honeyraw2014)
+honeyraw2014$honeyraw2014 <- as.character(honeyraw2014$honeyraw2014)
+
+honeyraw2015 <- honeyraw2015[1:47,]
+honeyraw2015 <- honeyraw2015[-c(11,22,33,44,46)]
+honeyraw2015 <- as.data.frame(honeyraw2015)
+honeyraw2015$honeyraw2015 <- as.character(honeyraw2015$honeyraw2015)
+
+honeyraw2016 <- honeyraw2016[1:47,]
+honeyraw2016 <- honeyraw2016[-c(11,22,33,44,46)]
+honeyraw2016 <- as.data.frame(honeyraw2016)
+honeyraw2016$honeyraw2016 <- as.character(honeyraw2016$honeyraw2016)
+```
+After doing this, I think it would have probably been easier to write a function to somehow identify the first needed row, last needed row, and all of the empty rows between.  
+
+
+### Function Building to Tidy Data
+However, now we can build a function that will clean these dataframes and tidy them up:  
+```{r}
+CleanHoneyData <- function(df, year) {
+  dfClean <- separate(df, 1, paste0("X",1:9), sep=",") #separate columns by comma and assign generic column names X1:X9
+  dfClean <- dfClean %>%
+    setNames(c("X1", "X2", "state", "numcol", "yieldpercol","totalprod",
+               "stocks","priceperlb","prodvalue")) %>%
+    select(-X1, -X2) #rename the column names and remove the first two columns, as they are not important
+  USIndex <- nrow(df) #row number of the US entry
+  OSIndex <- nrow(df) - 1 #row number of the other states entry
+  
+  dfClean$state <- gsub("\"", "", dfClean$state) #clean up the state names by removing slashes
+  dfClean$state[OSIndex:USIndex] <- c("Other States", "United States") #assign names to other states and US rows
+  dfClean$numcol <- as.integer(dfClean$numcol)*1000 #convert number of colonies to integer and scale
+  dfClean$yieldpercol <- as.integer(dfClean$yieldpercol) #convert yield per colony to integer
+  dfClean$totalprod <- as.integer(dfClean$totalprod)*1000 #convert total production to integer and scale
+  dfClean$stocks <- as.integer(dfClean$stocks)*1000 #convert stocks to integet
+  dfClean$priceperlb <- as.numeric(dfClean$priceperlb)/100 #convert price per pount to a number and divide by 100 to put into dollar format 
+  dfClean$prodvalue <- as.integer(dfClean$prodvalue)*1000 #convert production value to an integer and scale
+  dfClean$year <- year #create a year column and assign the corresponding year that was input into the function
+  return(dfClean)
+}
+
+honeyclean13 <- CleanHoneyData(honeyraw2013, 2013)
+honeyclean14 <- CleanHoneyData(honeyraw2014, 2014)
+honeyclean15 <- CleanHoneyData(honeyraw2015, 2015)
+honeyclean16 <- CleanHoneyData(honeyraw2016, 2016)
+```
+We now have clean, tidy dataframes with the data we want. Notice that the *state* column in  the dataset from Kaggle uses state abbreviations, while the datasets we have been cleaning use the full state names.  We will want to reconcile these differences in order to maintain consistency when we combine the data together.  
+
+### State Reconciliation and Table Merging
+To do so, we will first need to create a sort of "reference" table, with the state abbreviations and their corresponding full names:  
+```{r}
+stateMatch <- data.frame(state.abb, state.name)
+colnames(stateMatch) <- c("state", "stateFull")
+```
+Next, we want to convert the state column in the Kaggle dataset to a factor, and then we will want to use a *join* to get the correct state names into the dataframe.  
+```{r}
+honeyclean9812$state <- as.factor(honeyclean9812$state) #convert state to factor 
+combined <- sort(union(levels(honeyclean9812$state), levels(stateMatch$state))) #ensure that both stateMatch and honeyclean9812 have the same levels within the state factor 
+levels(honeyclean9812$state) <- combined
+levels(stateMatch$state) <- combined
+
+
+honeyclean9812 <- honeyclean9812 %>%
+  left_join(stateMatch, by = "state")
+honeyclean9812
+```
+In the above code, I was receiving a warning message regarding different levels within the state factor when trying to merge the tables.  This warning was remedied by ensuring both state factors within the two dataframes had the same factors.   
+
+### Append Dataframes 
+Now, let's reorder the columns and drop the state abbreviation column, so we can align the dataframes properly:
+```{r}
+honeyclean9812 <- honeyclean9812[, c(9,2:8)]
+colnames(honeyclean9812)[1] <- c("state")
+```
+Finally, let's append our newly cleaned data from 2013-2016 to the Kaggle dataset.  
+```{r}
+honeyClean <- rbind(honeyclean9812, honeyclean13, honeyclean14, honeyclean15, honeyclean16)
+honeyClean
+```
+You'll notice that this data is still not perfect.  In fact, it is far from perfect.  By using different sources of data (i.e. using an already clean dataset from Kaggle and cleaning our own raw data from NASS), we have some issues with consistency across the dataframe. Most notably, in the years 2013-2016, we have more data than the data from the Kaggle because of the "Other States" and "United States" levels within the *state* factor.  I figured to leave these entries in because they would be relatively simple to discard when building a dashboard or performing data analysis. 
